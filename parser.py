@@ -74,3 +74,6 @@ def channel(message):
 		return [ int(res[1]), spl[1] ]
 	else:
 		return ["", message]
+
+def all(message):
+	return [message, ""]

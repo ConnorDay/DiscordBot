@@ -53,13 +53,27 @@ class Bot(discord.Client):
 			#print("wow you're an admin!")
 			#await message.channel.send("wow you're an admin!")
 		if message.content[0] == "!": #Temporary for now. There should be an isCommand function somewhere
-			cmd, args = message.content[1:].split(maxsplit=1)
+			print(f"Found command: {message.content[1:]}")
+			try:
+				cmd, args = message.content[1:].split(maxsplit=1)
+			except ValueError:
+				cmd = message.content[1:]
+				args = ""
 
 			if cmd in commands.translate:
 				#$cmd is a valid command
 				com = commands.translate[cmd](message, args)
+
 				com.parse()
+				if not com.valid:
+					await message.channel.send("Could not interpret message")
+					return
+
 				com.validate()
+				if not com.valid:
+					await message.channel.send( f"`{message.author.mention}` is not authorized to use this command" )
+					return
+					
 				await com.run() #this can potentially be changed to create a new task. This would handle large tasks being run concurrently
 		
 	async def on_raw_reaction_add( self, payload ):

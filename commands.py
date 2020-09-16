@@ -1,6 +1,9 @@
 import parser
+import asyncio
 import json
 import os
+import subprocess
+import threading
 import discord
 
 def getJson(guild : int):
@@ -14,7 +17,8 @@ def setJson(guild : int, data):
 	path = f"servers/{guild}/data"
 	if os.path.exists(path):
 		with open(path, "w") as f:
-			f.write(json.dumps(data))
+			a = json.dumps(data)
+			f.write(a)
 
 async def printGameMessage( game : str, guild ):
 	data = getJson( guild.id )
@@ -29,8 +33,7 @@ async def printGameMessage( game : str, guild ):
 	role = discord.utils.find( lambda x : x.name == game, guild.roles )
 	if not role:
 		role = await guild.create_role( name = game )
-	data["assign_messages"][mes.id] = role.id
-	print(mes.id)
+	data["assign_messages"][str(mes.id)] = role.id
 
 	setJson( guild.id, data )
 	
@@ -169,6 +172,7 @@ class setLevel(command):
 			self.set_channel,
 			self.set_reaction
 		]
+		self.access = 4
 		self.getAccess('set')
 	async def confirmation( self, overload : str, name , level : int ):
 		if type(name) == int:
@@ -245,6 +249,7 @@ class game(command):
 		self.definitions = [
 			self.manageGame
 		]
+		self.access = 4
 		self.getAccess('set')
 	
 	async def manageGame( self, cmd : str, game : str ):
@@ -259,9 +264,16 @@ class game(command):
 		await commands[cmd.lower()]( game, getJson(self.message.guild.id) )
 		
 	async def addGame( self, game : str, data ):
+		if not game.isalnum():
+			await self.message.channel.send("Only alphanumeric game names are allowed")
+			return
+
 		role = discord.utils.find( lambda x : x.name == game, self.message.guild.roles )
-		if not role:
-			role = await self.message.guild.create_role( name = game )
+		if role:
+			await self.message.channel.send(f"A role with name {game} already exists. Please choose another name")
+			return
+
+		role = await self.message.guild.create_role( name = game )
 		data['games'][game] = role.id
 		channel = discord.utils.find( lambda x : x.name == game, self.message.guild.text_channels )
 		if not channel:
@@ -274,9 +286,10 @@ class game(command):
 			voice = await self.message.guild.create_voice_channel( game, overwrites = overwrites, category = category )
 		data['game_channels'][channel.id] = game
 
+		setJson( self.message.guild.id, data )
+
 		await printGameMessage( game, self.message.guild )
 
-		setJson( self.message.guild.id, data )
 		
 	
 	async def removeGame( self, game : str, data ):
@@ -320,9 +333,144 @@ class game(command):
 		await self.message.channel.send(f"Successfully removed `{game}`")
 
 
+class launch(command):
+	running = {}
+	def __init__(self, message, cont):
+		super().__init__(message, cont)
+		self.formats = [
+			[]
+		]
+		self.definitions = [
+			self.start
+		]
+		self.access = 1
+		self.getAccess('launch')
+	
+	def listener( self, game, proc ):
+		for line in proc.stdout:
+			launch.running[game]['output'].append(line.strip())
+	
+	def writer( self, game, proc ):
+		while proc.poll() == None:
+			while len( launch.running[game]['input'] ):
+				inp = launch.running[game]['input'][0]
+				del launch.running[game]['input'][0]
+				proc.stdin.write(inp + "\n")
+	
+
+	async def manager(self, game):
+
+		launch.running[game] = {
+			"input" : [],
+			"output" : [],
+			"err" : [],
+			"kill" : False
+		}
+
+		proc = subprocess.Popen(f"launchers/{game}.sh", stdin = subprocess.PIPE, stdout = subprocess.PIPE, stderr = subprocess.PIPE, universal_newlines=True, bufsize=1 )
+
+		listen = threading.Thread( target=self.listener, args=(game, proc) )
+		listen.start()
+		writen = threading.Thread( target=self.writer, args=(game, proc) )
+		writen.start()
+		
+
+		while listen.is_alive() and writen.is_alive():
+			buff = []
+			while len( launch.running[game]['output'] ):
+				out = launch.running[game]['output'][0]
+				del launch.running[game]['output'][0]
+
+				buff.append(out)
+
+
+			line = '\n'.join(buff)
+			while len(line) > 0:
+				toSend = line[:1000]
+				line = line[1000:]
+				await self.message.channel.send(f"```{toSend}```")
+			await asyncio.sleep(1)
+
+		del launch.running[game]
+		await self.message.channel.send(f"{game} has ended")
+			
+	
+	async def start(self):
+		data = getJson(self.message.guild.id)
+		mesID = str(self.message.channel.id)
+		if mesID not in data['game_channels']:
+			await self.message.channel.send(f"This is not a game channel.")
+			return
+		
+		game = data['game_channels'][mesID]
+		if game in launch.running:
+			await self.message.channel.send(f"Game: `{game}` is already running")
+			return
+
+		if not os.path.exists(f"launchers/{game}.sh"):
+			await self.message.channel.send(f"Game: `{game}` cannot be launched.")
+			return
+
+		asyncio.create_task( self.manager(game) )
+	
+	
+class send(command):
+	def __init__(self, message, cont):
+		super().__init__(message, cont)
+		self.formats = [
+			[parser.all]
+		]
+		self.definitions=[
+			self.send
+		]
+		self.access = 2
+		self.getAccess('send')
+
+	async def send(self, args):
+		data = getJson(self.message.guild.id)
+		mesID = str(self.message.channel.id)
+		if mesID not in data['game_channels']:
+			await self.message.channel.send(f"This is not a game channel.")
+			return
+		
+		game = data['game_channels'][mesID]
+		if game not in launch.running:
+			await self.message.channel.send(f"Game: `{game}` is not running")
+			return
+
+		launch.running[game]['input'].append(args)
+
+class quit(command):
+	def __init__(self, message, cont):
+		super().__init__(message, cont)
+		self.formats = [
+			[]
+		]
+		self.definitions=[
+			self.quit
+		]
+		self.access = 1
+		self.getAccess('quit')
+	
+	async def quit( self ):
+		data = getJson(self.message.guild.id)
+		mesID = str(self.message.channel.id)
+		if mesID not in data['game_channels']:
+			await self.message.channel.send(f"This is not a game channel.")
+			return
+		
+		game = data['game_channels'][mesID]
+		if game not in launch.running:
+			await self.message.channel.send(f"Game: `{game}` is not running")
+			return
+
+		launch.running[game]['kill'] = True
 
 translate = {
 	"ping" : ping,
 	"set" : setLevel,
-	"game" : game
+	"game" : game,
+	"launch" : launch,
+	"send" : send,
+	"quit" : quit
 }

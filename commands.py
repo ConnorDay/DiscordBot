@@ -59,7 +59,17 @@ class command:
 		if data:
 			if name in data['commands']:
 				self.access = data['commands'][name]
+	
+	def getHelp(self, full=False):
+		return "Something went wrong here"
 		
+	def getArgs( self ):
+		ret = []
+		for mode in self.formats:
+			ret.append( [i.__qualname__ for i in mode] )
+
+		return ret
+
 		
 	def parse(self):
 		message = self.content
@@ -87,11 +97,12 @@ class command:
 			return
 
 		#admins can always run all commands
-		if self.message.author.top_role.permissions.administrator:
-			return
+		for role in self.message.author.roles:
+			if role.permissions.administrator:
+				return
 
 		access = 0
-		target = self.message.author.id
+		target = str(self.message.author.id)
 		data = getJson(self.message.guild.id)
 		if data:
 
@@ -107,7 +118,6 @@ class command:
 
 		if access < self.access:
 			self.valid = False
-			self.reason = "User not authorized for that command"
 
 
 	async def run(self):
@@ -134,7 +144,7 @@ class ping(command):
 			self.handle_role,
 			self.handle_channel
 		]
-
+		self.access = 1000
 		self.getAccess('ping')
 	async def handle1(self, arg : int , arg2 : int):
 		await self.message.channel.send("this should have been an int")
@@ -174,6 +184,10 @@ class setLevel(command):
 		]
 		self.access = 4
 		self.getAccess('set')
+
+	def getHelp(self, full=False):
+		return "Configure server settings and access levels"
+
 	async def confirmation( self, overload : str, name , level : int ):
 		if type(name) == int:
 			res = discord.utils.find( lambda x : x.id == name, self.message.guild.members )
@@ -216,6 +230,8 @@ class setLevel(command):
 		
 		res = discord.utils.find( lambda x : x.id == channel, self.message.guild.text_channels )
 		if key.lower() == "assign":
+			data['assign_messages'] = {}
+			setJson(self.message.guild.id,data)
 			for game in data['games']:
 				await printGameMessage( game, self.message.guild )
 
@@ -238,6 +254,12 @@ class setLevel(command):
 			else:
 				data['reactions'][specifier] = arg2
 				setJson(self.message.guild.id, data)
+				assign = self.message.guild.get_channel(data['assign'])
+
+				for mes in data['assign_messages']:
+					message = await assign.fetch_message( mes )
+					await message.clear_reactions()
+					await message.add_reaction(arg2)
 				await self.message.channel.send(f"Successfully added `{arg2}` as `{specifier}`")
 
 class game(command):
@@ -251,6 +273,9 @@ class game(command):
 		]
 		self.access = 4
 		self.getAccess('set')
+	
+	def getHelp( self, full=False ):
+		return "Manage 'games' on the server. A game is defined by a role and voice and text channels"
 	
 	async def manageGame( self, cmd : str, game : str ):
 		commands = {
@@ -289,6 +314,7 @@ class game(command):
 		setJson( self.message.guild.id, data )
 
 		await printGameMessage( game, self.message.guild )
+		await self.message.channel.send(f"Finished adding game: `{game}`")
 
 		
 	
@@ -345,6 +371,9 @@ class launch(command):
 		]
 		self.access = 1
 		self.getAccess('launch')
+	
+	def getHelp( self, full=False ):
+		return "Attempts to launch a game server. Must be called in a games's text channel"
 	
 	def listener( self, game, proc ):
 		for line in proc.stdout:
@@ -425,6 +454,9 @@ class send(command):
 		]
 		self.access = 2
 		self.getAccess('send')
+	
+	def getHelp( self, full=False ):
+		return "Sends data to a launched game server. Must be called in a game's text channel"
 
 	async def send(self, args):
 		data = getJson(self.message.guild.id)
@@ -452,6 +484,9 @@ class quit(command):
 		self.access = 1
 		self.getAccess('quit')
 	
+	def getHelp( self, full=False ):
+		return "Force quits out of a game server. Must be called in a game's text channel"
+	
 	async def quit( self ):
 		data = getJson(self.message.guild.id)
 		mesID = str(self.message.channel.id)
@@ -466,11 +501,42 @@ class quit(command):
 
 		launch.running[game]['kill'] = True
 
+class help(command):
+	def __init__(self, message, cont):
+		super().__init__(message, cont)
+		self.formats = [
+			[],
+			[parser.word]
+		]
+		self.definitions = [
+			self.defHelp,
+			self.specHelp
+		]
+		self.getAccess('help')
+	
+	def getHelp( self, full=False ):
+		return "Get help on commands :)"
+	
+	async def defHelp( self ):
+		helps = []
+		for command in translate:
+			temp = translate[command](self.message, self.content)
+			args = [", ".join(i) for i in temp.getArgs()]
+			mes = f"{command} ({temp.access}): {temp.getHelp()}\n\tAccepted Arguments:[{'] ['.join(args)}]"
+			helps.append(mes)
+
+		mes = "```\n" + '\n'.join(helps) + "```"
+		await self.message.channel.send(mes)
+	
+	async def specHelp( self, command : str ):
+		await self.message.channel.send("Sorry this is not yet implemented")
+	
+
 translate = {
-	"ping" : ping,
 	"set" : setLevel,
 	"game" : game,
 	"launch" : launch,
 	"send" : send,
-	"quit" : quit
+	"quit" : quit,
+	"help" : help
 }

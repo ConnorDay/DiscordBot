@@ -71,7 +71,7 @@ class Bot(discord.Client):
 
 				com.validate()
 				if not com.valid:
-					await message.channel.send( f"`{message.author.mention}` is not authorized to use this command" )
+					await message.channel.send( f"You are not authorized to use this command" )
 					return
 					
 				await com.run() #this can potentially be changed to create a new task. This would handle large tasks being run concurrently
@@ -81,6 +81,10 @@ class Bot(discord.Client):
 			return
 		data = commands.getJson( payload.guild_id )
 		if str(payload.message_id) in data['assign_messages']:
+			if not str(payload.emoji) == data['reactions']['join']:
+				#The user reacted with something other than the join emoji
+				return
+
 			role = payload.member.guild.get_role( data['assign_messages'][str(payload.message_id)] )
 			if role:
 				await payload.member.add_roles( role )
@@ -93,6 +97,9 @@ class Bot(discord.Client):
 
 		data = commands.getJson( payload.guild_id )
 		if str(payload.message_id) in data['assign_messages']:
+			if not str(payload.emoji) == data['reactions']['join']:
+				#The user reacted with something other than the join emoji
+				return
 			role = guild.get_role( data['assign_messages'][str(payload.message_id)] )
 			if role:
 				await member.remove_roles( role )
